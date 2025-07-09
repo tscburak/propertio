@@ -180,9 +180,11 @@ export default function Home() {
                           </div>
                           
                           <div style={{ marginTop: '1rem' }}>
-                            <Button fullWidth variant="primary">
-                              View Details
-                            </Button>
+                            <Link href={`/${property._id}`}>
+                              <Button fullWidth variant="primary">
+                                View Details
+                              </Button>
+                            </Link>
                           </div>
                         </div>
                       </Card>

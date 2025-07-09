@@ -11,23 +11,29 @@ import {
   LegacyStack,
   Page,
   Select,
+  Spinner,
   Text,
   TextField,
   Thumbnail,
   Toast
 } from '@shopify/polaris';
-import { DeleteIcon, ImageIcon, NoteIcon } from '@shopify/polaris-icons';
-import { useCallback, useState } from 'react';
+import { CheckIcon, DeleteIcon, ImageIcon, NoteIcon, RefreshIcon } from '@shopify/polaris-icons';
+import { useCallback, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import apiClient from '@/lib/apiClient';
 import { usePropertyTypes } from '@/lib/hooks';
 import { useUploadManager } from '@/hooks/useUploadManager';
 
+// Extend File interface to include UUID
+interface FileWithUUID extends File {
+  uuid: string;
+}
+
 export default function Post() {
   const router = useRouter();
   const { propertyTypes, loading: typesLoading } = usePropertyTypes();
   const { uploads, isUploading, uploadFiles, retryUpload, clearUploads } = useUploadManager();
-  const [files, setFiles] = useState<File[]>([]);
+  const [files, setFiles] = useState<FileWithUUID[]>([]);
   const [showToast, setShowToast] = useState(false);
   const [toastMessage, setToastMessage] = useState('');
   const [toastError, setToastError] = useState(false);
@@ -76,7 +82,14 @@ export default function Post() {
       const validFiles = dropFiles.filter(file => 
         file.type.startsWith('image/') && file.size <= 10 * 1024 * 1024
       );
-      setFiles((files) => [...files, ...validFiles]);
+      
+      // Add UUIDs to all valid files
+      const filesWithUUIDs: FileWithUUID[] = validFiles.map(file => {
+        const uuid = crypto.randomUUID();
+        return Object.assign(file, { uuid }) as FileWithUUID;
+      });
+      
+      setFiles((files) => [...files, ...filesWithUUIDs]);
     },
     [],
   );
@@ -85,7 +98,8 @@ export default function Post() {
     setFiles(files => files.filter((_, i) => i !== index));
   }, []);
 
-  const handleSubmit = useCallback(async () => {
+    const handleSubmit = useCallback(async () => {
+
     if (!validateForm()) {
       setToastMessage('Please fix the form errors');
       setToastError(true);
@@ -102,6 +116,7 @@ export default function Post() {
         description: formData.description.trim(),
       };
 
+      console.log('Creating property with data:', propertyData);
       const createResponse = await apiClient.createProperty(propertyData);
 
       if (!createResponse.success) {
@@ -109,62 +124,26 @@ export default function Post() {
       }
 
       const property = createResponse.data;
+      console.log('Property created:', property?._id);
 
       // Start image uploads if any
       if (files.length > 0 && property && property._id) {
+        console.log('Starting upload for', files.length, 'files');
         await uploadFiles(files, property._id.toString());
-        
-        // Check if all uploads completed successfully
-        const allSuccessful = uploads.every(upload => upload.status === 'completed');
-        
-        if (allSuccessful) {
-          setToastMessage('Property created successfully! All images uploaded.');
-          setToastError(false);
-          setShowToast(true);
-
-          // Reset form
-          setFormData({
-            title: '',
-            propertyType: '',
-            price: '',
-            description: ''
-          });
-          setFiles([]);
-          setErrors({});
-          clearUploads();
-
-          // Redirect to home page after successful uploads
-          setTimeout(() => {
-            router.push('/');
-          }, 2000);
-        } else {
-          setToastMessage('Property created successfully! Some images failed to upload. Please retry failed uploads.');
-          setToastError(false);
-          setShowToast(true);
-        }
-      } else {
-        // No images to upload, redirect immediately
-        setToastMessage('Property created successfully!');
-        setToastError(false);
-        setShowToast(true);
-
-        // Reset form
-        setFormData({
-          title: '',
-          propertyType: '',
-          price: '',
-          description: ''
-        });
-        setFiles([]);
-        setErrors({});
-        clearUploads();
-
-        // Redirect to home page
-        setTimeout(() => {
-          router.push('/');
-        }, 2000);
       }
+      
+      setToastMessage('Property created successfully! Images are uploading...');
+      setToastError(false);
+      setShowToast(true);
 
+      // Reset form
+      setFormData({
+        title: '',
+        propertyType: '',
+        price: '',
+        description: ''
+      });
+      
     } catch (error) {
       console.error('Error creating property:', error);
       setToastMessage(error instanceof Error ? error.message : 'Failed to create property');
@@ -172,6 +151,20 @@ export default function Post() {
       setShowToast(true);
     }
   }, [formData, files, validateForm, router, uploadFiles, clearUploads]);
+
+  useEffect(() => {
+    console.log('Uploads changed:', uploads.map(u => ({ filename: u.filename, status: u.status })));
+    
+    if(uploads.filter(u => u.status === 'error').length > 0){
+      setToastMessage('Some images failed to upload. Please try again.');
+      setToastError(true);
+      setShowToast(true);
+    }else if (files.length && uploads.length && uploads.every(u => u.status === 'completed')){
+      setTimeout(() => {
+        router.push('/');
+      }, 3000);
+    }
+  }, [uploads, files.length, clearUploads, router]);
 
   // Form field change handlers
   const handleTitleChange = useCallback((value: string) => {
@@ -226,63 +219,44 @@ export default function Post() {
             <div style={{ flex: 1 }}>
               <Text variant="bodyMd" as="p">{file.name}</Text>
               <Text variant="bodySm" as="p" tone="subdued">
-                {(file.size / 1024 / 1024).toFixed(2)} MB • Queued
+                {(file.size / 1024 / 1024).toFixed(2)} MB • ID: {file.uuid.slice(0, 8)}...
               </Text>
             </div>
-            {!isUploading && (
+            {(() => {
+              const upload = uploads.find(u => u.file?.uuid === file.uuid);
+              if (!upload) {
+                return <></>
+              }
+              
+              switch (upload.status) {
+                case 'queued':
+                case 'uploading':
+                  return <Spinner size="small"/>;
+                case 'completed':
+                  return <Icon source={CheckIcon} tone="success" />;
+                case 'error':
+                  return (
+                    <div onClick={(e) => e.stopPropagation()}>
+                      <Button
+                        icon={RefreshIcon}
+                        onClick={() => retryUpload(upload.id)}
+                        variant="plain"
+                        accessibilityLabel="Retry upload"
+                      />
+                    </div>
+                  );
+                default:
+                  return <Spinner accessibilityLabel="Spinner example" size="small" />;
+              }
+            })()}
+            <div onClick={(e) => e.stopPropagation()}>
               <Button
                 icon={DeleteIcon}
                 onClick={() => removeFile(index)}
                 variant="plain"
                 accessibilityLabel="Remove image"
               />
-            )}
-          </LegacyStack>
-        ))}
-        
-        {/* Show upload status */}
-        {uploads.map((upload) => (
-          <LegacyStack alignment="center" key={upload.id}>
-            <Thumbnail
-              size="small"
-              alt={upload.filename}
-              source={upload.url || NoteIcon}
-            />
-            <div style={{ flex: 1 }}>
-              <Text variant="bodyMd" as="p">{upload.filename}</Text>
-              <Text variant="bodySm" as="p" tone={upload.status === 'completed' ? 'success' : upload.status === 'error' ? 'critical' : 'subdued'}>
-                {upload.status === 'queued' && `Queued for upload (${uploads.filter(u => u.status === 'queued').indexOf(upload) + 1}/${uploads.filter(u => u.status === 'queued').length})`}
-                {upload.status === 'uploading' && `Uploading... ${Math.round(upload.progress)}%`}
-                {upload.status === 'completed' && '✓ Upload completed'}
-                {upload.status === 'error' && `✗ Upload failed: ${upload.error}`}
-              </Text>
-              {(upload.status === 'uploading' || upload.status === 'queued' || upload.status === 'completed') && (
-                <div style={{ 
-                  width: '100%', 
-                  height: '4px', 
-                  backgroundColor: '#e1e3e5', 
-                  borderRadius: '2px',
-                  marginTop: '0.25rem'
-                }}>
-                  <div style={{
-                    width: upload.status === 'completed' ? '100%' : upload.status === 'uploading' ? `${upload.progress}%` : '0%',
-                    height: '100%',
-                    backgroundColor: upload.status === 'completed' ? '#50b83c' : upload.status === 'uploading' ? '#007c5e' : '#8c9196',
-                    borderRadius: '2px',
-                    transition: 'width 0.3s ease'
-                  }} />
-                </div>
-              )}
             </div>
-            {upload.status === 'error' && (
-              <Button
-                onClick={() => retryUpload(upload.id)}
-                variant="primary"
-                size="slim"
-              >
-                Retry
-              </Button>
-            )}
           </LegacyStack>
         ))}
       </LegacyStack>
@@ -311,7 +285,7 @@ export default function Post() {
       backAction={{ content: 'Home', url: '/' }}
       title={
         isUploading 
-          ? `Post New Property • Uploading ${uploads.filter(u => u.status === 'uploading').length}/3 • ${uploads.filter(u => u.status === 'completed').length} completed`
+          ? `Post New Property • Uploading ${uploads.filter(u => u.status === 'uploading').length}/3`
           : "Post New Property"
       }
       primaryAction={{
@@ -393,7 +367,7 @@ export default function Post() {
               {files.length > 0 && (
                 <div style={{ marginTop: '1rem' }}>
                   <Banner tone="info">
-                    <p>Images will be uploaded 3 at a time. You will only be redirected after all uploads complete successfully. Failed uploads can be retried.</p>
+                    <p>Images will be uploaded 3 at a time. The page will wait for all uploads to complete before redirecting.</p>
                   </Banner>
                 </div>
               )}

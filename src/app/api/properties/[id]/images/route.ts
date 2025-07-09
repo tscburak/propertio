@@ -107,10 +107,13 @@ export async function POST(
       }
     }
 
-    // Update property with new image URLs
+    // Update property with new image URLs using atomic operation
     if (uploadedUrls.length > 0) {
-      property.images = [...property.images, ...uploadedUrls];
-      await property.save();
+      await Property.findByIdAndUpdate(
+        propertyId,
+        { $push: { images: { $each: uploadedUrls } } },
+        { new: true }
+      );
     }
 
     return NextResponse.json({

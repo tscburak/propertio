@@ -1,6 +1,11 @@
 import { useState, useCallback, useRef } from 'react';
 import apiClient from '../lib/apiClient';
 
+// Extend File interface to include UUID
+interface FileWithUUID extends File {
+  uuid: string;
+}
+
 export interface UploadStatus {
   id: string;
   filename: string;
@@ -8,7 +13,7 @@ export interface UploadStatus {
   status: 'queued' | 'uploading' | 'completed' | 'error';
   url?: string;
   error?: string;
-  file?: File; // Store the original file for retry
+  file?: FileWithUUID; // Store the original file for retry
   propertyId?: string; // Store property ID for retry
 }
 
@@ -16,16 +21,22 @@ export function useUploadManager() {
   const [uploads, setUploads] = useState<UploadStatus[]>([]);
   const [isUploading, setIsUploading] = useState(false);
   const uploadsRef = useRef<UploadStatus[]>([]);
-  const [activeUploads, setActiveUploads] = useState<Set<string>>(new Set());
   const maxConcurrentUploads = 3;
 
   // Update ref when uploads change
   uploadsRef.current = uploads;
 
-  const uploadFiles = useCallback(async (files: File[], propertyId: string) => {
+  const uploadFiles = useCallback(async (files: FileWithUUID[], propertyId: string) => {
+    console.log('=== UPLOAD MANAGER START ===');
+    console.log('Files received:', files.map(f => ({ name: f.name, uuid: f.uuid })));
+    console.log('Property ID:', propertyId);
+    
+    // Clear any existing uploads first
+    setUploads([]);
+    
     // Create initial upload statuses
     const newUploads: UploadStatus[] = files.map(file => ({
-      id: `${Date.now()}-${Math.random()}`,
+      id: file.uuid,
       filename: file.name,
       progress: 0,
       status: 'queued' as const,
@@ -33,31 +44,41 @@ export function useUploadManager() {
       propertyId,
     }));
 
-    setUploads(prev => [...prev, ...newUploads]);
+    console.log('Created upload statuses:', newUploads.map(u => ({ id: u.id, filename: u.filename, uuid: u.file?.uuid })));
+    setUploads(newUploads);
     setIsUploading(true);
 
     // Create a queue of files to upload
-    const fileQueue = files.map((file, index) => ({
+    const fileQueue = [...files.map((file, index) => ({
       file,
       uploadId: newUploads[index].id,
-    }));
+    }))];
+
+    console.log('File queue created:', fileQueue.length, 'files');
 
     // Process queue with max 3 concurrent uploads
     const processQueue = async () => {
-      while (fileQueue.length > 0 || activeUploads.size > 0) {
+      const activeUploadsSet = new Set<string>();
+      
+      while (fileQueue.length > 0 || activeUploadsSet.size > 0) {
+        console.log('Queue status:', { queueLength: fileQueue.length, activeUploads: activeUploadsSet.size });
+        
         // Start new uploads if we have capacity
-        while (fileQueue.length > 0 && activeUploads.size < maxConcurrentUploads) {
+        while (fileQueue.length > 0 && activeUploadsSet.size < maxConcurrentUploads) {
           const { file, uploadId } = fileQueue.shift()!;
-          activeUploads.add(uploadId);
+          activeUploadsSet.add(uploadId);
+          
+          console.log('Starting upload:', { filename: file.name, uploadId, activeCount: activeUploadsSet.size });
           
           // Start upload in background
-          uploadSingleFile(file, uploadId, propertyId);
+          uploadSingleFile(file, uploadId, propertyId, activeUploadsSet);
         }
         
         // Wait a bit before checking again
         await new Promise(resolve => setTimeout(resolve, 100));
       }
       
+      console.log('All uploads completed');
       setIsUploading(false);
     };
 
@@ -65,9 +86,11 @@ export function useUploadManager() {
     processQueue();
 
     return newUploads.map(upload => upload.id);
-  }, [activeUploads]);
+  }, []);
 
-  const uploadSingleFile = async (file: File, uploadId: string, propertyId: string) => {
+  const uploadSingleFile = async (file: FileWithUUID, uploadId: string, propertyId: string, activeUploadsSet: Set<string>) => {
+    console.log('Starting upload for file:', { name: file.name, uuid: file.uuid, uploadId });
+    
     try {
       // Update status to uploading
       setUploads(prev => 
@@ -90,7 +113,9 @@ export function useUploadManager() {
       }, 200);
 
       // Upload single file
+      console.log('Calling API for file:', file.name);
       const response = await apiClient.uploadPropertyImages(propertyId, [file]);
+      console.log('API response:', response);
       
       clearInterval(progressInterval);
 
@@ -137,11 +162,7 @@ export function useUploadManager() {
       );
     } finally {
       // Remove from active uploads
-      setActiveUploads(prev => {
-        const newSet = new Set(prev);
-        newSet.delete(uploadId);
-        return newSet;
-      });
+      activeUploadsSet.delete(uploadId);
     }
   };
 
@@ -162,14 +183,17 @@ export function useUploadManager() {
       )
     );
 
+    // Create a new active uploads set for retry
+    const activeUploadsSet = new Set<string>();
+    activeUploadsSet.add(uploadId);
+    
     // Start upload again
-    uploadSingleFile(upload.file, uploadId, upload.propertyId);
+    uploadSingleFile(upload.file, uploadId, upload.propertyId, activeUploadsSet);
   }, [uploads]);
 
   const clearUploads = useCallback(() => {
     setUploads([]);
     setIsUploading(false);
-    setActiveUploads(new Set());
   }, []);
 
   const getCompletedUrls = useCallback(() => {
