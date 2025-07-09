@@ -10,23 +10,69 @@ import {
   Badge,
   Spinner,
   EmptyState,
-  Pagination
+  Pagination,
+  TextField,
+  Select,
+  LegacyStack,
+  Icon
 } from '@shopify/polaris';
-import { ImageIcon } from '@shopify/polaris-icons';
+import { ImageIcon, SearchIcon } from '@shopify/polaris-icons';
 import Link from 'next/link';
 import { useProperties, usePropertyTypes } from '@/lib/hooks';
-import { useCallback } from 'react';
+import { useCallback, useState, useEffect } from 'react';
 
 export default function Home() {
+  const [searchTerm, setSearchTerm] = useState('');
+  const [selectedType, setSelectedType] = useState('');
+  const [debouncedSearchTerm, setDebouncedSearchTerm] = useState('');
+
   const { properties, loading, error, pagination, fetchProperties } = useProperties({
     initialParams: { page: 1, limit: 6 },
     autoFetch: true
   });
   const { propertyTypes } = usePropertyTypes();
 
+  // Debounce search term
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedSearchTerm(searchTerm);
+    }, 500);
+
+    return () => clearTimeout(timer);
+  }, [searchTerm]);
+
+  // Apply filters when search term or type changes
+  useEffect(() => {
+    fetchProperties({ 
+      page: 1, 
+      limit: 6, 
+      search: debouncedSearchTerm || undefined,
+      type: selectedType || undefined
+    });
+  }, [debouncedSearchTerm, selectedType, fetchProperties]);
+
   const handlePageChange = useCallback((page: number) => {
-    fetchProperties({ page, limit: 6 });
-  }, [fetchProperties]);
+    fetchProperties({ 
+      page, 
+      limit: 6,
+      search: debouncedSearchTerm || undefined,
+      type: selectedType || undefined
+    });
+  }, [fetchProperties, debouncedSearchTerm, selectedType]);
+
+  const handleSearchChange = useCallback((value: string) => {
+    setSearchTerm(value);
+  }, []);
+
+  const handleTypeChange = useCallback((value: string) => {
+    setSelectedType(value);
+  }, []);
+
+  const clearFilters = useCallback(() => {
+    setSearchTerm('');
+    setSelectedType('');
+    setDebouncedSearchTerm('');
+  }, []);
 
   const getPropertyTypeLabel = useCallback((typeId: string) => {
     const propertyType = propertyTypes.find(type => type._id?.toString() === typeId);
@@ -81,9 +127,59 @@ export default function Home() {
         <Layout.Section>
           <Card>
             <div style={{ padding: '1rem' }}>
+              {/* Search and Filter Section */}
+              <div style={{ marginBottom: '2rem' }}>
+                <div style={{ marginBottom: '1rem' }}>
+                  <Text variant="headingMd" as="h2">
+                    Search & Filter
+                  </Text>
+                </div>
+                
+                <LegacyStack spacing="tight">
+                  <div style={{ flex: 1 }}>
+                    <TextField
+                      label="Search properties"
+                      placeholder="Search by title or description..."
+                      value={searchTerm}
+                      onChange={handleSearchChange}
+                      prefix={<Icon source={SearchIcon} />}
+                      clearButton
+                      onClearButtonClick={() => setSearchTerm('')}
+                      autoComplete="off"
+                    />
+                  </div>
+                  
+                  <div style={{ minWidth: '200px' }}>
+                    <Select
+                      label="Property Type"
+                      options={[
+                        { label: 'All Types', value: '' },
+                        ...propertyTypes.map(type => ({
+                          label: type.label,
+                          value: type._id?.toString() || ''
+                        }))
+                      ]}
+                      value={selectedType}
+                      onChange={handleTypeChange}
+                      placeholder="Select type"
+                    />
+                  </div>
+                  
+                  <div style={{ display: 'flex', alignItems: 'end' }}>
+                    <Button
+                      onClick={clearFilters}
+                      variant="plain"
+                      disabled={!searchTerm && !selectedType}
+                    >
+                      Clear Filters
+                    </Button>
+                  </div>
+                </LegacyStack>
+              </div>
+
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
                 <Text variant="headingMd" as="h2">
-                  Recent Properties
+                  Properties
                 </Text>
                 <Text variant="bodySm" as="p" tone="subdued">
                   {pagination.total} properties found
@@ -147,7 +243,7 @@ export default function Home() {
                             
                             <div style={{ marginTop: '0.5rem' }}>
                               <Badge tone="info">
-                                {getPropertyTypeLabel(property.type.toString())}
+                                {getPropertyTypeLabel(property.type._id.toString())}
                               </Badge>
                             </div>
                             
