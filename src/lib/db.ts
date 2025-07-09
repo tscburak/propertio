@@ -11,22 +11,25 @@ const connectionOptions = {
   maxPoolSize: 10, // Maintain up to 10 socket connections
   serverSelectionTimeoutMS: 5000, // Keep trying to send operations for 5 seconds
   socketTimeoutMS: 45000, // Close sockets after 45 seconds of inactivity
+  bufferCommands: true, // Enable mongoose buffering for better reliability
   bufferMaxEntries: 0, // Disable mongoose buffering
-  bufferCommands: false, // Disable mongoose buffering
 };
 
 /**
  * Connect to MongoDB using Mongoose
  */
 export async function connectToDatabase(): Promise<typeof mongoose> {
-  // If already connected, return existing connection
-  if (isConnected) {
+  // If already connected and ready, return existing connection
+  if (isConnected && mongoose.connection.readyState === 1) {
     return mongoose;
   }
 
   try {
     // Connect to MongoDB
     await mongoose.connect(MONGODB_URI, connectionOptions);
+    
+    // Wait for connection to be ready
+    await mongoose.connection.asPromise();
     
     isConnected = true;
     console.log('✅ Successfully connected to MongoDB');
@@ -75,7 +78,16 @@ export async function disconnectFromDatabase(): Promise<void> {
  * Get the current connection status
  */
 export function getConnectionStatus(): boolean {
-  return isConnected;
+  return isConnected && mongoose.connection.readyState === 1;
+}
+
+/**
+ * Ensure database is connected before performing operations
+ */
+export async function ensureConnection(): Promise<void> {
+  if (!getConnectionStatus()) {
+    await connectToDatabase();
+  }
 }
 
 /**

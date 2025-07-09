@@ -18,4 +18,4 @@ const PropertyTypeSchema = new Schema<IPropertyType>({
 // Create indexes
 PropertyTypeSchema.index({ label: 1 });
 
-export const PropertyType = mongoose.model<IPropertyType>('PropertyType', PropertyTypeSchema); 
+export const PropertyType = mongoose.models.PropertyType || mongoose.model<IPropertyType>('PropertyType', PropertyTypeSchema); 

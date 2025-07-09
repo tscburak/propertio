@@ -13,14 +13,23 @@ import {
   Select,
   Text,
   TextField,
-  Thumbnail
+  Thumbnail,
+  Toast
 } from '@shopify/polaris';
 import { DeleteIcon, ImageIcon, NoteIcon } from '@shopify/polaris-icons';
 import { useCallback, useState } from 'react';
+import { useRouter } from 'next/navigation';
+import apiClient from '@/lib/apiClient';
+import { usePropertyTypes } from '@/lib/hooks';
 
 export default function Post() {
+  const router = useRouter();
+  const { propertyTypes, loading: typesLoading } = usePropertyTypes();
   const [files, setFiles] = useState<File[]>([]);
   const [isUploading, setIsUploading] = useState(false);
+  const [showToast, setShowToast] = useState(false);
+  const [toastMessage, setToastMessage] = useState('');
+  const [toastError, setToastError] = useState(false);
   
   // Form state
   const [formData, setFormData] = useState({
@@ -30,14 +39,36 @@ export default function Post() {
     description: ''
   });
 
-  const propertyTypes = [
-    { label: 'House', value: 'house' },
-    { label: 'Apartment', value: 'apartment' },
-    { label: 'Office', value: 'office' },
-    { label: 'Land', value: 'land' },
-    { label: 'Condo', value: 'condo' },
-    { label: 'Townhouse', value: 'townhouse' }
-  ];
+  // Form validation
+  const [errors, setErrors] = useState<Record<string, string>>({});
+
+  const validateForm = useCallback(() => {
+    const newErrors: Record<string, string> = {};
+
+    if (!formData.title.trim()) {
+      newErrors.title = 'Title is required';
+    }
+
+    if (!formData.propertyType) {
+      newErrors.propertyType = 'Property type is required';
+    }
+
+    if (!formData.price.trim()) {
+      newErrors.price = 'Price is required';
+    } else {
+      const price = parseFloat(formData.price);
+      if (isNaN(price) || price <= 0) {
+        newErrors.price = 'Price must be a positive number';
+      }
+    }
+
+    if (!formData.description.trim()) {
+      newErrors.description = 'Description is required';
+    }
+
+    setErrors(newErrors);
+    return Object.keys(newErrors).length === 0;
+  }, [formData]);
 
   const handleDropZoneDrop = useCallback(
     (dropFiles: File[]) => {
@@ -54,26 +85,99 @@ export default function Post() {
   }, []);
 
   const handleSubmit = useCallback(async () => {
+    if (!validateForm()) {
+      setToastMessage('Please fix the form errors');
+      setToastError(true);
+      setShowToast(true);
+      return;
+    }
+
     setIsUploading(true);
-    setTimeout(() => setIsUploading(false), 2000);
-  }, []);
+
+    try {
+      // Create property first
+      const propertyData = {
+        title: formData.title.trim(),
+        type: formData.propertyType,
+        price: parseFloat(formData.price),
+        description: formData.description.trim(),
+      };
+
+      const createResponse = await apiClient.createProperty(propertyData);
+
+      if (!createResponse.success) {
+        throw new Error(createResponse.error || 'Failed to create property');
+      }
+
+      const property = createResponse.data;
+
+      // Upload images if any
+      if (files.length > 0 && property && property._id) {
+        const uploadResponse = await apiClient.uploadPropertyImages(property._id.toString(), files);
+        
+        if (!uploadResponse.success) {
+          console.warn('Failed to upload images:', uploadResponse.error);
+          // Don't throw error here as property was created successfully
+        }
+      }
+
+      setToastMessage('Property created successfully!');
+      setToastError(false);
+      setShowToast(true);
+
+      // Reset form
+      setFormData({
+        title: '',
+        propertyType: '',
+        price: '',
+        description: ''
+      });
+      setFiles([]);
+      setErrors({});
+
+      // Redirect to home page after a short delay
+      setTimeout(() => {
+        router.push('/');
+      }, 2000);
+
+    } catch (error) {
+      console.error('Error creating property:', error);
+      setToastMessage(error instanceof Error ? error.message : 'Failed to create property');
+      setToastError(true);
+      setShowToast(true);
+    } finally {
+      setIsUploading(false);
+    }
+  }, [formData, files, validateForm, router]);
 
   // Form field change handlers
   const handleTitleChange = useCallback((value: string) => {
     setFormData(prev => ({ ...prev, title: value }));
-  }, []);
+    if (errors.title) {
+      setErrors(prev => ({ ...prev, title: '' }));
+    }
+  }, [errors.title]);
 
   const handlePropertyTypeChange = useCallback((value: string) => {
     setFormData(prev => ({ ...prev, propertyType: value }));
-  }, []);
+    if (errors.propertyType) {
+      setErrors(prev => ({ ...prev, propertyType: '' }));
+    }
+  }, [errors.propertyType]);
 
   const handlePriceChange = useCallback((value: string) => {
     setFormData(prev => ({ ...prev, price: value }));
-  }, []);
+    if (errors.price) {
+      setErrors(prev => ({ ...prev, price: '' }));
+    }
+  }, [errors.price]);
 
   const handleDescriptionChange = useCallback((value: string) => {
     setFormData(prev => ({ ...prev, description: value }));
-  }, []);
+    if (errors.description) {
+      setErrors(prev => ({ ...prev, description: '' }));
+    }
+  }, [errors.description]);
 
   const validImageTypes = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
 
@@ -122,13 +226,18 @@ export default function Post() {
     </div>
   );
 
+  const propertyTypeOptions = propertyTypes.map(type => ({
+    label: type.label,
+    value: type._id?.toString() || ''
+  }));
+
   return (
     <Page
       backAction={{ content: 'Home', url: '/' }}
       title="Post New Property"
       primaryAction={{
         content: isUploading ? 'Saving...' : 'Save Property',
-        disabled: isUploading,
+        disabled: isUploading || typesLoading,
         loading: isUploading,
         onAction: handleSubmit
       }}
@@ -145,14 +254,17 @@ export default function Post() {
                   autoComplete="off"
                   value={formData.title}
                   onChange={handleTitleChange}
+                  error={errors.title}
                 />
                 
                 <Select
                   label="Property Type"
-                  options={propertyTypes}
+                  options={propertyTypeOptions}
                   placeholder="Select property type"
                   value={formData.propertyType}
                   onChange={handlePropertyTypeChange}
+                  error={errors.propertyType}
+                  disabled={typesLoading}
                 />
 
                 <TextField
@@ -163,6 +275,7 @@ export default function Post() {
                   autoComplete="off"
                   value={formData.price}
                   onChange={handlePriceChange}
+                  error={errors.price}
                 />
 
                 <TextField
@@ -172,6 +285,7 @@ export default function Post() {
                   autoComplete="off"
                   value={formData.description}
                   onChange={handleDescriptionChange}
+                  error={errors.description}
                 />
               </FormLayout>
             </div>
@@ -208,6 +322,15 @@ export default function Post() {
           </Card>
         </Layout.Section>
       </Layout>
+
+      {showToast && (
+        <Toast
+          content={toastMessage}
+          error={toastError}
+          onDismiss={() => setShowToast(false)}
+          duration={4000}
+        />
+      )}
     </Page>
   );
 }

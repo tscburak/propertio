@@ -48,4 +48,4 @@ PropertySchema.index({ type: 1 });
 PropertySchema.index({ price: 1 });
 PropertySchema.index({ created_at: -1 });
 
-export const Property = mongoose.model<IProperty>('Property', PropertySchema); 
+export const Property = mongoose.models.Property || mongoose.model<IProperty>('Property', PropertySchema); 
