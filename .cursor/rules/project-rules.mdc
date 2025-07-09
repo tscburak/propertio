@@ -1,0 +1,229 @@
+# Propertio Project Rules & Guidelines
+
+## Project Overview
+Propertio is a real estate management system built with:
+- **Frontend**: Next.js 15 with App Router + Shopify Polaris React
+- **Backend**: Next.js API Routes
+- **Database**: MongoDB
+- **File Storage**: Cloudflare R2 (S3-compatible)
+- **Image Processing**: Sharp for optimization
+
+## Core Features
+1. **Post Real Estate**: Users can create listings for houses, offices, etc.
+2. **List Properties**: Browse and search through posted properties
+3. **Image Upload Queue**: Concurrent upload system (max 3 simultaneous uploads)
+
+## Architecture Rules
+
+### 1. File Structure
+```
+src/
+├── app/                    # Next.js App Router
+│   ├── api/               # API routes
+│   ├── properties/        # Property listing pages
+│   └── post/              # Property posting pages
+├── components/            # Reusable components
+│   ├── ui/               # Polaris UI components
+│   ├── forms/            # Form components
+│   └── upload/           # Upload-related components
+├── lib/                   # Utility functions
+│   ├── db/               # Database utilities
+│   ├── upload/           # Upload queue system
+│   └── utils/            # General utilities
+├── types/                 # TypeScript type definitions
+└── rules/                 # Project rules (this file)
+```
+
+### 2. Database Schema (MongoDB)
+
+#### Property Collection
+```typescript
+interface Property {
+  _id: ObjectId;
+  title: string;
+  description: string;
+  type: 'house' | 'office' | 'apartment' | 'land';
+  price: number;
+  location: {
+    address: string;
+    city: string;
+    state: string;
+    zipCode: string;
+    coordinates?: [number, number]; // [longitude, latitude]
+  };
+  features: {
+    bedrooms?: number;
+    bathrooms?: number;
+    area: number; // in sq ft
+    parking?: number;
+    amenities: string[];
+  };
+  images: ImageInfo[];
+  status: 'active' | 'sold' | 'pending' | 'inactive';
+  createdAt: Date;
+  updatedAt: Date;
+  userId: ObjectId;
+}
+```
+
+#### Image Collection
+```typescript
+interface ImageInfo {
+  _id: ObjectId;
+  propertyId: ObjectId;
+  filename: string;
+  originalName: string;
+  mimeType: string;
+  size: number;
+  url: string;
+  thumbnailUrl: string;
+  order: number;
+  uploadStatus: 'pending' | 'uploading' | 'completed' | 'failed';
+  createdAt: Date;
+}
+```
+
+#### Upload Queue Collection
+```typescript
+interface UploadQueue {
+  _id: ObjectId;
+  propertyId: ObjectId;
+  imageId: ObjectId;
+  status: 'queued' | 'processing' | 'completed' | 'failed';
+  priority: number;
+  retryCount: number;
+  maxRetries: number;
+  createdAt: Date;
+  startedAt?: Date;
+  completedAt?: Date;
+  error?: string;
+}
+```
+
+### 3. Image Upload Queue System
+
+#### Rules:
+- **Concurrent Uploads**: Maximum 3 simultaneous uploads
+- **Queue Priority**: FIFO (First In, First Out)
+- **Retry Logic**: Maximum 3 retries per failed upload
+- **File Types**: JPG, PNG, WebP only
+- **File Size**: Maximum 10MB per image
+- **Image Processing**: Generate thumbnails (300x300px) and optimize
+
+#### Upload Flow:
+1. User selects images → Store in temporary storage
+2. Create ImageInfo records with 'pending' status
+3. Add to UploadQueue with priority based on order
+4. Queue processor picks up to 3 items
+5. Upload to Cloudflare R2 with progress tracking
+6. Generate thumbnails and optimize images
+7. Update ImageInfo with URLs and 'completed' status
+8. Remove from queue
+
+### 4. API Routes Structure
+
+#### Properties
+- `GET /api/properties` - List properties with pagination/filtering
+- `GET /api/properties/[id]` - Get single property
+- `POST /api/properties` - Create new property
+- `PUT /api/properties/[id]` - Update property
+- `DELETE /api/properties/[id]` - Delete property
+
+#### Images
+- `POST /api/images/upload` - Initiate image upload
+- `GET /api/images/[propertyId]` - Get property images
+- `DELETE /api/images/[id]` - Delete image
+- `PUT /api/images/reorder` - Reorder images
+
+#### Upload Queue
+- `GET /api/upload/queue` - Get queue status
+- `POST /api/upload/retry` - Retry failed upload
+- `DELETE /api/upload/cancel` - Cancel upload
+
+### 5. Component Guidelines
+
+#### Polaris Integration
+- Use Polaris components for all UI elements
+- Follow Polaris design patterns and spacing
+- Implement responsive design using Polaris breakpoints
+- Use Polaris icons consistently
+
+#### Form Components
+- Implement proper validation with error handling
+- Use Polaris FormLayout and Form components
+- Provide real-time feedback for image uploads
+- Show upload progress and queue status
+
+#### Image Upload Component
+- Drag & drop support
+- Multiple file selection
+- Preview thumbnails
+- Upload progress indicators
+- Queue status display
+- Ability to reorder images
+
+### 6. Environment Variables
+```env
+# MongoDB
+MONGODB_URI=mongodb://localhost:27017/propertio
+
+# Cloudflare R2
+R2_ACCOUNT_ID=your_account_id
+R2_ACCESS_KEY_ID=your_access_key
+R2_SECRET_ACCESS_KEY=your_secret_key
+R2_BUCKET_NAME=propertio-images
+R2_ENDPOINT=https://your_account_id.r2.cloudflarestorage.com
+
+# Upload Settings
+MAX_CONCURRENT_UPLOADS=3
+MAX_FILE_SIZE=10485760 # 10MB
+MAX_RETRIES=3
+```
+
+### 7. Error Handling
+- Implement proper error boundaries
+- Log errors with context
+- Provide user-friendly error messages
+- Handle network failures gracefully
+- Implement retry mechanisms for failed operations
+
+### 8. Performance Guidelines
+- Implement image lazy loading
+- Use Next.js Image component for optimization
+- Implement proper caching strategies
+- Optimize database queries with indexes
+- Use pagination for large datasets
+
+### 9. Security Rules
+- Validate all file uploads
+- Sanitize user inputs
+- Implement proper authentication/authorization
+- Use environment variables for sensitive data
+- Implement rate limiting for API endpoints
+
+### 10. Testing Strategy
+- Unit tests for utility functions
+- Integration tests for API routes
+- Component tests for UI elements
+- E2E tests for critical user flows
+- Upload queue system testing
+
+## Development Workflow
+1. Follow TypeScript strict mode
+2. Use ESLint and Prettier for code formatting
+3. Write meaningful commit messages
+4. Create feature branches for new development
+5. Test thoroughly before merging
+6. Document API changes
+7. Update this rules file when architecture changes
+
+## Deployment
+- Use Vercel for hosting
+- Set up proper environment variables
+- Configure MongoDB Atlas for production
+- Set up Cloudflare R2 bucket with proper CORS
+- Implement monitoring and logging
+description:
+globs:
+alwaysApply: false
+---
