@@ -39,11 +39,7 @@ class ApiClient {
         };
       }
 
-      return {
-        success: true,
-        data: data.data || data,
-        message: data.message,
-      };
+      return data
     } catch (error) {
       return {
         success: false,
@@ -58,6 +54,7 @@ class ApiClient {
    * Create a new property
    */
   async createProperty(propertyData: CreatePropertyData): Promise<ApiResponse<IProperty>> {
+    
     return this.request<IProperty>('/properties', {
       method: 'POST',
       body: JSON.stringify(propertyData),
@@ -67,7 +64,7 @@ class ApiClient {
   /**
    * Get all properties with pagination and filters
    */
-  async getProperties(params: PropertyQueryParams = {}): Promise<PaginatedResponse<IProperty>> {
+  async getProperties(params: PropertyQueryParams = {}): Promise<PaginatedResponse<IProperty[]>> {
     const searchParams = new URLSearchParams();
     
     Object.entries(params).forEach(([key, value]) => {
@@ -79,26 +76,22 @@ class ApiClient {
     const endpoint = `/properties${searchParams.toString() ? `?${searchParams.toString()}` : ''}`;
     
     try {
-      const response = await this.request<IProperty[]>(endpoint);
-      
+      const response = await this.request(endpoint) as PaginatedResponse<IProperty[]>;
       if (!response.success) {
         return {
           success: false,
-          data: [],
+          data: undefined,
           pagination: { page: 1, limit: 10, total: 0, totalPages: 0 },
           error: response.error,
         };
       }
-
-      // Assuming the API returns pagination info in the response
-      const defaultPagination = {
-        page: 1,
-        limit: 10,
-        total: 0,
-        totalPages: 0,
-      };
-      const pagination = (response.data as { pagination?: typeof defaultPagination })?.pagination || defaultPagination;
-
+      console.log(response);
+      const pagination = {
+        page: response.pagination.page || 1,
+        limit: response.pagination.limit || 10,
+        total: response.pagination.total || 0,
+        totalPages: response.pagination.totalPages || 0,
+      }
       return {
         success: true,
         data: response.data || [],
@@ -107,7 +100,7 @@ class ApiClient {
     } catch (error) {
       return {
         success: false,
-        data: [],
+        data: undefined,
         pagination: { page: 1, limit: 10, total: 0, totalPages: 0 },
         error: error instanceof Error ? error.message : 'Network error',
       };
@@ -144,14 +137,14 @@ class ApiClient {
   /**
    * Get properties by type
    */
-  async getPropertiesByType(typeId: string, params: Omit<PropertyQueryParams, 'type'> = {}): Promise<PaginatedResponse<IProperty>> {
+  async getPropertiesByType(typeId: string, params: Omit<PropertyQueryParams, 'type'> = {}): Promise<PaginatedResponse<IProperty[]>> {
     return this.getProperties({ ...params, type: typeId });
   }
 
   /**
    * Search properties by title or description
    */
-  async searchProperties(searchTerm: string, params: Omit<PropertyQueryParams, 'search'> = {}): Promise<PaginatedResponse<IProperty>> {
+  async searchProperties(searchTerm: string, params: Omit<PropertyQueryParams, 'search'> = {}): Promise<PaginatedResponse<IProperty[]>> {
     return this.getProperties({ ...params, search: searchTerm });
   }
 
@@ -187,8 +180,9 @@ class ApiClient {
     const formData = new FormData();
     formData.append('propertyId', propertyId);
     
+    // Append each image to the form data
     images.forEach((image) => {
-      formData.append(`images`, image);
+      formData.append('images', image);
     });
 
     try {

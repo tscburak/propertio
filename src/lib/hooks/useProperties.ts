@@ -21,7 +21,6 @@ export function useProperties(options: UsePropertiesOptions = {}) {
     totalPages: 0,
   });
   const hasFetched = useRef(false);
-
   const fetchProperties = useCallback(async (params: PropertyQueryParams = {}) => {
     setLoading(true);
     setError(null);
@@ -32,6 +31,7 @@ export function useProperties(options: UsePropertiesOptions = {}) {
       if (response.success && response.data) {
         setProperties(response.data);
         setPagination(response.pagination);
+        
       } else {
         setError(response.error || 'Failed to fetch properties');
       }

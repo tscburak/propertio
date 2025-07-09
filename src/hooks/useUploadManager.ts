@@ -1,7 +1,7 @@
 import { useState, useCallback, useRef } from 'react';
-import uploadManager from '../lib/uploadManager';
+import apiClient from '../lib/apiClient';
 
-interface UploadStatus {
+export interface UploadStatus {
   id: string;
   filename: string;
   progress: number;
@@ -18,7 +18,7 @@ export function useUploadManager() {
   // Update ref when uploads change
   uploadsRef.current = uploads;
 
-  const uploadFiles = useCallback((files: File[], propertyId: string) => {
+  const uploadFiles = useCallback(async (files: File[], propertyId: string) => {
     // Create initial upload statuses
     const newUploads: UploadStatus[] = files.map(file => ({
       id: `${Date.now()}-${Math.random()}`,
@@ -30,70 +30,64 @@ export function useUploadManager() {
     setUploads(prev => [...prev, ...newUploads]);
     setIsUploading(true);
 
-    // Add to upload manager queue
-    const taskIds = uploadManager.addToQueue(files, propertyId, {
-      onProgress: (taskId, progress) => {
+    // Upload files using our API
+    try {
+      const response = await apiClient.uploadPropertyImages(propertyId, files);
+      
+      if (response.success && response.data?.urls) {
+        // Update all uploads to completed
         setUploads(prev => 
           prev.map(upload => 
-            upload.id === taskId 
-              ? { ...upload, progress, status: 'uploading' as const }
+            newUploads.some(newUpload => newUpload.id === upload.id)
+              ? { 
+                  ...upload, 
+                  progress: 100, 
+                  status: 'completed' as const, 
+                  url: response.data!.urls[0] // For simplicity, use first URL
+                }
               : upload
           )
         );
-      },
-      onComplete: (taskId, url) => {
+      } else {
+        // Update all uploads to error
         setUploads(prev => 
           prev.map(upload => 
-            upload.id === taskId 
-              ? { ...upload, progress: 100, status: 'completed' as const, url }
+            newUploads.some(newUpload => newUpload.id === upload.id)
+              ? { 
+                  ...upload, 
+                  status: 'error' as const, 
+                  error: response.error || 'Upload failed'
+                }
               : upload
           )
         );
-
-        // Check if all uploads are complete
-        const updatedUploads = uploadsRef.current.map(upload => 
-          upload.id === taskId 
-            ? { ...upload, progress: 100, status: 'completed' as const, url }
+      }
+    } catch (error) {
+      // Update all uploads to error
+      setUploads(prev => 
+        prev.map(upload => 
+          newUploads.some(newUpload => newUpload.id === upload.id)
+            ? { 
+                ...upload, 
+                status: 'error' as const, 
+                error: error instanceof Error ? error.message : 'Upload failed'
+              }
             : upload
-        );
+        )
+      );
+    } finally {
+      setIsUploading(false);
+    }
 
-        if (updatedUploads.every(upload => upload.status === 'completed' || upload.status === 'error')) {
-          setIsUploading(false);
-        }
-      },
-      onError: (taskId, error) => {
-        setUploads(prev => 
-          prev.map(upload => 
-            upload.id === taskId 
-              ? { ...upload, status: 'error' as const, error: error.message }
-              : upload
-          )
-        );
-
-        // Check if all uploads are complete
-        const updatedUploads = uploadsRef.current.map(upload => 
-          upload.id === taskId 
-            ? { ...upload, status: 'error' as const, error: error.message }
-            : upload
-        );
-
-        if (updatedUploads.every(upload => upload.status === 'completed' || upload.status === 'error')) {
-          setIsUploading(false);
-        }
-      },
-    });
-
-    return taskIds;
+    return newUploads.map(upload => upload.id);
   }, []);
 
   const removeUpload = useCallback((uploadId: string) => {
     setUploads(prev => prev.filter(upload => upload.id !== uploadId));
-    uploadManager.removeFromQueue(uploadId);
   }, []);
 
   const clearUploads = useCallback(() => {
     setUploads([]);
-    uploadManager.clearQueue();
     setIsUploading(false);
   }, []);
 
@@ -103,17 +97,13 @@ export function useUploadManager() {
       .map(upload => upload.url!);
   }, [uploads]);
 
-  const getUploadStatus = useCallback(() => {
-    return uploadManager.getStatus();
-  }, []);
-
   return {
     uploads,
     isUploading,
     uploadFiles,
+    setUploads,
     removeUpload,
     clearUploads,
     getCompletedUrls,
-    getUploadStatus,
   };
 } 

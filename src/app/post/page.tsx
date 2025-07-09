@@ -21,12 +21,13 @@ import { useCallback, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import apiClient from '@/lib/apiClient';
 import { usePropertyTypes } from '@/lib/hooks';
+import { useUploadManager } from '@/hooks/useUploadManager';
 
 export default function Post() {
   const router = useRouter();
   const { propertyTypes, loading: typesLoading } = usePropertyTypes();
+  const { uploads, isUploading, uploadFiles, removeUpload, clearUploads } = useUploadManager();
   const [files, setFiles] = useState<File[]>([]);
-  const [isUploading, setIsUploading] = useState(false);
   const [showToast, setShowToast] = useState(false);
   const [toastMessage, setToastMessage] = useState('');
   const [toastError, setToastError] = useState(false);
@@ -92,8 +93,6 @@ export default function Post() {
       return;
     }
 
-    setIsUploading(true);
-
     try {
       // Create property first
       const propertyData = {
@@ -111,17 +110,12 @@ export default function Post() {
 
       const property = createResponse.data;
 
-      // Upload images if any
+      // Start image uploads if any
       if (files.length > 0 && property && property._id) {
-        const uploadResponse = await apiClient.uploadPropertyImages(property._id.toString(), files);
-        
-        if (!uploadResponse.success) {
-          console.warn('Failed to upload images:', uploadResponse.error);
-          // Don't throw error here as property was created successfully
-        }
+        uploadFiles(files, property._id.toString());
       }
 
-      setToastMessage('Property created successfully!');
+      setToastMessage('Property created successfully! Images are uploading in the background.');
       setToastError(false);
       setShowToast(true);
 
@@ -134,6 +128,7 @@ export default function Post() {
       });
       setFiles([]);
       setErrors({});
+      clearUploads();
 
       // Redirect to home page after a short delay
       setTimeout(() => {
@@ -145,10 +140,8 @@ export default function Post() {
       setToastMessage(error instanceof Error ? error.message : 'Failed to create property');
       setToastError(true);
       setShowToast(true);
-    } finally {
-      setIsUploading(false);
     }
-  }, [formData, files, validateForm, router]);
+  }, [formData, files, validateForm, router, uploadFiles, clearUploads]);
 
   // Form field change handlers
   const handleTitleChange = useCallback((value: string) => {
@@ -181,12 +174,16 @@ export default function Post() {
 
   const validImageTypes = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
 
-  const uploadedFiles = files.length > 0 && (
+  const uploadedFiles = (files.length > 0 || uploads.length > 0) && (
     <div style={{ marginTop: '1rem' }}>
-      <Text variant="headingMd" as="h3">Selected Images ({files.length})</Text>
+      <Text variant="headingMd" as="h3">
+        Images ({files.length + uploads.length})
+        {isUploading && <span style={{ marginLeft: '0.5rem', color: '#007c5e' }}>• Uploading</span>}
+      </Text>
       <LegacyStack vertical spacing="tight">
+        {/* Show selected files */}
         {files.map((file, index) => (
-          <LegacyStack alignment="center" key={index}>
+          <LegacyStack alignment="center" key={`file-${index}`}>
             <Thumbnail
               size="small"
               alt={file.name}
@@ -199,7 +196,7 @@ export default function Post() {
             <div style={{ flex: 1 }}>
               <Text variant="bodyMd" as="p">{file.name}</Text>
               <Text variant="bodySm" as="p" tone="subdued">
-                {(file.size / 1024 / 1024).toFixed(2)} MB
+                {(file.size / 1024 / 1024).toFixed(2)} MB • Queued
               </Text>
             </div>
             <Button
@@ -208,6 +205,51 @@ export default function Post() {
               variant="plain"
               accessibilityLabel="Remove image"
             />
+          </LegacyStack>
+        ))}
+        
+        {/* Show upload status */}
+        {uploads.map((upload) => (
+          <LegacyStack alignment="center" key={upload.id}>
+            <Thumbnail
+              size="small"
+              alt={upload.filename}
+              source={upload.url || NoteIcon}
+            />
+            <div style={{ flex: 1 }}>
+              <Text variant="bodyMd" as="p">{upload.filename}</Text>
+              <Text variant="bodySm" as="p" tone="subdued">
+                {upload.status === 'queued' && 'Queued for upload'}
+                {upload.status === 'uploading' && `Uploading... ${Math.round(upload.progress)}%`}
+                {upload.status === 'completed' && 'Upload completed'}
+                {upload.status === 'error' && `Upload failed: ${upload.error}`}
+              </Text>
+              {upload.status === 'uploading' && (
+                <div style={{ 
+                  width: '100%', 
+                  height: '4px', 
+                  backgroundColor: '#e1e3e5', 
+                  borderRadius: '2px',
+                  marginTop: '0.25rem'
+                }}>
+                  <div style={{
+                    width: `${upload.progress}%`,
+                    height: '100%',
+                    backgroundColor: '#007c5e',
+                    borderRadius: '2px',
+                    transition: 'width 0.3s ease'
+                  }} />
+                </div>
+              )}
+            </div>
+            {upload.status === 'error' && (
+              <Button
+                icon={DeleteIcon}
+                onClick={() => removeUpload(upload.id)}
+                variant="plain"
+                accessibilityLabel="Remove failed upload"
+              />
+            )}
           </LegacyStack>
         ))}
       </LegacyStack>

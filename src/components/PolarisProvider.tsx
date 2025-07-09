@@ -1,6 +1,6 @@
 "use client"
 
-import { AppProvider } from "@shopify/polaris";
+import { AppProvider, Frame } from "@shopify/polaris";
 import "@shopify/polaris/build/esm/styles.css";
 
 export default function PolarisProvider({
@@ -22,7 +22,9 @@ export default function PolarisProvider({
         },
       },
     }}>
-      {children}
+      <Frame>
+        {children}
+      </Frame>
     </AppProvider>
   );
 } 

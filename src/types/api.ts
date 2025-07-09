@@ -6,16 +6,13 @@ export interface ApiResponse<T> {
   message?: string;
 }
 
-export interface PaginatedResponse<T> {
-  success: boolean;
-  data: T[];
+export interface PaginatedResponse<T> extends ApiResponse<T> {
   pagination: {
     page: number;
     limit: number;
     total: number;
     totalPages: number;
   };
-  error?: string;
 }
 
 // Property creation/update types
